@@ -270,6 +270,47 @@ growproc(int n)
   return 0;
 }
 
+// nice: 0 ~ 39
+static int weight_table[40] = {
+  88761, 71755, 56483, 46273, 36291,
+  29154, 23254, 18705, 14949, 11916,
+  9548, 7620, 6100, 4904, 3906,
+  3121, 2501, 1991, 1586, 1277,
+  1024, 820, 655, 526, 423,
+  335, 272, 215, 172, 137,
+  110, 87, 70, 56, 45,
+  36, 29, 23, 18, 15
+};
+
+int
+weight(int nice)
+{
+  if(nice < 0)
+    nice = 0;
+  if(nice > 39)
+    nice = 39;
+  return weight_table[nice];
+}
+
+
+uint64 
+calculate_vdeadline(struct proc *p){ // input : by ai
+  return p->vruntime + ((uint64)p->timeslice * 1024)/weight(p->nice);
+}
+
+
+// int 
+// calculate_eligibility(struct proc *p)
+// {
+//   int V = min(p->vruntime)+sum((p->vruntime)-min(p->vruntime))*weight(p->nice)/sum(weight(p->nice))
+//   ((V-(p->vruntime))>= 0) ? return 1 : return 0 ;
+
+
+// }
+
+
+
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
@@ -325,7 +366,7 @@ kfork(void)
   np -> timeslice = 5; // not inherit parent parameter
 
   np -> vdeadline = calculate_vdeadline(np);
-  np -> is_eligible = calculate_eligibility(np); // recalculated parameter
+  // np -> is_eligible = calculate_eligibility(np); // recalculated parameter
 
   return pid;
 }
