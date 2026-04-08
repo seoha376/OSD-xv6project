@@ -125,6 +125,22 @@ found:
   p->pid = allocpid();
   p->state = USED;
   p->nice = 20;
+  p->runtime = 0; // initialize. set default value.
+  p->vruntime = 0;
+  p->vdeadline = 0;
+  p->timeslice = 5;
+  p->is_eligible = 1;
+
+
+  printf("pid: %d\n", p-> pid);
+  printf("name: %s\n", p-> name);
+
+  printf("runtime: %ld\n", p-> runtime);
+  printf("vruntime: %ld\n", p-> vruntime);
+  printf("vdeadline: %ld\n", p-> vdeadline);
+  printf("timeslice: %d\n", p-> timeslice);
+  printf("is_eligible: %d\n", p-> is_eligible);
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -738,7 +754,7 @@ ps(int pid)
         printf("%s %d %s %d\n", p->name, p->pid, states[p->state], p->nice);
       }
     }
-  }
+  }  
 }
 
 int
