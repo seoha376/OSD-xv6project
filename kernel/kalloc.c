@@ -80,3 +80,20 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+uint64
+meminfo(void)
+{
+  struct run *r;
+  uint64 free_pages = 0;
+
+  acquire(&kmem.lock); // ai was used(gpt or gemini)
+  r = kmem.freelist;
+  while(r){
+    free_pages++;
+    r = r->next;
+  }
+  release(&kmem.lock);
+
+  return free_pages * PGSIZE;
+}

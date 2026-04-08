@@ -124,7 +124,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-
+  p->nice = 20;
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -686,5 +686,95 @@ procdump(void)
       state = "???";
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+  }
+}
+int
+getnice(int pid)
+{
+  struct proc *p; // ai was used(gpt or gemini)
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->pid == pid){
+      return p->nice;
+    }
+  }
+  return -1;
+}
+
+
+int
+setnice(int pid, int value)
+{
+  struct proc *p;
+
+  if(value < 0 || value > 39)
+    return -1;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->pid == pid){
+      p->nice = value;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+void
+ps(int pid)
+{
+  struct proc *p;
+  char *states[] = { // ai was used(gpt or gemini)
+    [UNUSED]   "UNUSED",
+    [USED]     "USED",
+    [SLEEPING] "SLEEPING",
+    [RUNNABLE] "RUNNABLE",
+    [RUNNING]  "RUNNING",
+    [ZOMBIE]   "ZOMBIE"
+  };
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(pid == 0 || p->pid == pid){
+      if(p->state != UNUSED){
+        printf("%s %d %s %d\n", p->name, p->pid, states[p->state], p->nice);
+      }
+    }
+  }
+}
+
+int
+waitpid(int pid)
+{
+  struct proc *np;
+  int havekids;
+  struct proc *p = myproc(); 
+  
+
+  acquire(&wait_lock); 
+  
+  for(;;){ 
+    havekids = 0;
+    for(np = proc; np < &proc[NPROC]; np++){
+      if(np->parent == p && np->pid == pid){
+        acquire(&np->lock); // ai was used(gpt or gemini)
+        havekids = 1;
+        if(np->state == ZOMBIE){
+          
+          freeproc(np); // ai was used(gpt or gemini)
+          release(&np->lock); // ai was used(gpt or gemini)
+          release(&wait_lock);
+          return 0;
+        }
+        release(&np->lock);
+      }
+    }
+
+    
+    if(!havekids || p->killed){ // ai was used(gpt or gemini)
+      release(&wait_lock);
+      return -1; //실패 -> -1 반환
+    }
+
+    
+    sleep(p, &wait_lock); // ai was used(gpt or gemini)
   }
 }
