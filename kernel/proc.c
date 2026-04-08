@@ -277,10 +277,10 @@ kfork(void)
 {
   int i, pid;
   struct proc *np;
-  struct proc *p = myproc();
+  struct proc *p = myproc(); // take parent's value
 
   // Allocate process.
-  if((np = allocproc()) == 0){
+  if((np = allocproc()) == 0){ // create child
     return -1;
   }
 
@@ -317,6 +317,15 @@ kfork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
+  np -> nice = p -> nice;
+  np -> vruntime = p -> vruntime; // inherit parent parameter
+
+  np -> runtime = 0;
+  np -> timeslice = 5; // not inherit parent parameter
+
+  np -> vdeadline = calculate_vdeadline(np);
+  np -> is_eligible = calculate_eligibility(np); // recalculated parameter
 
   return pid;
 }
