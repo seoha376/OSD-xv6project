@@ -134,7 +134,7 @@ prepare_return(void)
 // on whatever the current kernel stack is.
 void 
 kerneltrap()
-{
+{ 
   int which_dev = 0;
   uint64 sepc = r_sepc();
   uint64 sstatus = r_sstatus();
@@ -152,8 +152,23 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0)
-    yield();
+  // if(which_dev == 2 && myproc() != 0)
+
+  //       yield();
+
+  if(which_dev == 2){
+    struct proc *p = myproc();
+    if(p && p->state == RUNNING){
+        p->runtime += 1;
+        p->vruntime += 1024*1000/ weight(p->nice);
+        p->timeslice -= 1;
+
+        if(p->timeslice <= 0){
+            p-> timeslice = 5;
+            yield();
+        }
+    }
+}
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

@@ -132,15 +132,6 @@ found:
   p->is_eligible = 1;
 
 
-  printf("pid: %d\n", p-> pid);
-  printf("name: %s\n", p-> name);
-
-  printf("runtime: %ld\n", p-> runtime);
-  printf("vruntime: %ld\n", p-> vruntime);
-  printf("vdeadline: %ld\n", p-> vdeadline);
-  printf("timeslice: %d\n", p-> timeslice);
-  printf("is_eligible: %d\n", p-> is_eligible);
-
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -271,26 +262,30 @@ growproc(int n)
 }
 
 // nice: 0 ~ 39
-static int weight_table[40] = {
-  88761, 71755, 56483, 46273, 36291,
-  29154, 23254, 18705, 14949, 11916,
-  9548, 7620, 6100, 4904, 3906,
-  3121, 2501, 1991, 1586, 1277,
-  1024, 820, 655, 526, 423,
-  335, 272, 215, 172, 137,
-  110, 87, 70, 56, 45,
-  36, 29, 23, 18, 15
-};
 
-int
-weight(int nice)
-{
-  if(nice < 0)
-    nice = 0;
-  if(nice > 39)
-    nice = 39;
-  return weight_table[nice];
+int weight(int nice){
+  switch(nice){
+    case 0: return 88761;
+    case 5: return 29154;
+    case 10: return 9548;
+    case 15: return 3121;
+    case 20: return 1024;
+    case 25: return 335;
+    case 30: return 110;
+    case 35: return 36;
+    default: return 1024;
+  }
 }
+
+// int
+// weight(int nice)
+// {
+//   if(nice < 0)
+//     nice = 0;
+//   if(nice > 39)
+//     nice = 39;
+//   return weight_table[nice];
+// }
 
 
 uint64 
@@ -304,12 +299,7 @@ calculate_vdeadline(struct proc *p){ // input : by ai
 // {
 //   int V = min(p->vruntime)+sum((p->vruntime)-min(p->vruntime))*weight(p->nice)/sum(weight(p->nice))
 //   ((V-(p->vruntime))>= 0) ? return 1 : return 0 ;
-
-
 // }
-
-
-
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
@@ -494,6 +484,7 @@ scheduler(void)
   struct cpu *c = mycpu();
 
   c->proc = 0;
+
   for(;;){
     // The most recent process to run may have had interrupts
     // turned off; enable them to avoid a deadlock if all
@@ -511,6 +502,7 @@ scheduler(void)
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
+
         c->proc = p;
         swtch(&c->context, &p->context);
 
@@ -769,16 +761,18 @@ getnice(int pid)
 
 
 int
-setnice(int pid, int value)
+setnice(int pid, int nice)
 {
   struct proc *p;
 
-  if(value < 0 || value > 39)
-    return -1;
+  if(nice < 0)
+    nice = 0;
+  if(nice > 39)
+    nice = 39;
 
   for(p = proc; p < &proc[NPROC]; p++){
     if(p->pid == pid){
-      p->nice = value;
+      p->nice = nice;
       return 0;
     }
   }
@@ -790,20 +784,33 @@ ps(int pid)
 {
   struct proc *p;
   char *states[] = { // ai was used(gpt or gemini)
-    [UNUSED]   "UNUSED",
-    [USED]     "USED",
-    [SLEEPING] "SLEEPING",
-    [RUNNABLE] "RUNNABLE",
-    [RUNNING]  "RUNNING",
-    [ZOMBIE]   "ZOMBIE"
+    [UNUSED]   = "UNUSED",
+    [USED]     = "USED",
+    [SLEEPING] = "SLEEPING",
+    [RUNNABLE] = "RUNNABLE",
+    [RUNNING]  = "RUNNING",
+    [ZOMBIE]   = "ZOMBIE"
   };
 
   for(p = proc; p < &proc[NPROC]; p++){
-    if(pid == 0 || p->pid == pid){
-      if(p->state != UNUSED){
-        printf("%s %d %s %d\n", p->name, p->pid, states[p->state], p->nice);
-      }
+    // if(pid == 0 || p->pid == pid){
+    //   if(p->state != UNUSED){
+    //     printf("%s %d %s %d\n", p->name, p->pid, states[p->state], p->nice);
+    //   }
+    // }
+
+    if(p->state == UNUSED){
+      continue;
     }
+
+    if(pid != 0 && p->pid != pid)
+    continue;
+
+
+    printf("name=%s pid=%d state=%s nice=%d runtime=%ld vruntime=%ld vdeadline=%ld timeslice=%d eligible=%d\n",
+           p->name, p->pid, states[p->state], p->nice,
+           p->runtime * 1000, p->vruntime, p->vdeadline,
+           p->timeslice, p->is_eligible);
   }  
 }
 

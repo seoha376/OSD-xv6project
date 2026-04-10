@@ -106,6 +106,7 @@ int setnice(int pid, int value);
 void ps(int pid);
 uint64 meminfo(void);
 int waitpid(int pid);
+int weight(int nice);
 // swtch.S
 void            swtch(struct context*, struct context*);
 
