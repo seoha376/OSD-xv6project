@@ -261,7 +261,6 @@ growproc(int n)
   return 0;
 }
 
-// nice: 0 ~ 39
 
 int weight(int nice){
   switch(nice){
@@ -277,21 +276,37 @@ int weight(int nice){
   }
 }
 
-// int
-// weight(int nice)
-// {
-//   if(nice < 0)
-//     nice = 0;
-//   if(nice > 39)
-//     nice = 39;
-//   return weight_table[nice];
-// }
 
 
 uint64 
 calculate_vdeadline(struct proc *p){ // input : by ai
   return p->vruntime + ((uint64)p->timeslice * 1024)/weight(p->nice);
 }
+
+
+int min_vruntime = 0;
+int sum_numerator = 0;
+int sum_denominator = 0;
+
+
+// int
+// calculate_eligibility(struct proc *p){
+//   for (p=proc;p<&proc[NPROC]; p++){
+//     if (p->state != RUNNING)
+//       continue;
+//     sum_numerator += (p->vruntime - min_vruntime)*weight(p->nice);
+//     sum_denominator += weight(p->nice);
+
+//     if (weight(p->nice)*sum_numerator/sum_denominator+min_vruntime-p->vruntime >= 0){
+//       p->is_eligible = 1;
+      
+//     } else p->is_eligible=0;
+    
+//   }
+// }
+
+
+
 
 
 // int 
@@ -497,6 +512,11 @@ scheduler(void)
     int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
+
+      if(p->state == RUNNABLE || p->state == RUNNING){
+        // p->is_eligible = calculate_eligibility(p);
+      }
+
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
@@ -793,11 +813,6 @@ ps(int pid)
   };
 
   for(p = proc; p < &proc[NPROC]; p++){
-    // if(pid == 0 || p->pid == pid){
-    //   if(p->state != UNUSED){
-    //     printf("%s %d %s %d\n", p->name, p->pid, states[p->state], p->nice);
-    //   }
-    // }
 
     if(p->state == UNUSED){
       continue;

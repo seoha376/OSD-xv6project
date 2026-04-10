@@ -107,6 +107,7 @@ void ps(int pid);
 uint64 meminfo(void);
 int waitpid(int pid);
 int weight(int nice);
+uint64 calculate_vdeadline(struct proc *p);
 // swtch.S
 void            swtch(struct context*, struct context*);
 

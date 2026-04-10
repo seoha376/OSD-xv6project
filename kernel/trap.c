@@ -164,6 +164,7 @@ kerneltrap()
         p->timeslice -= 1;
 
         if(p->timeslice <= 0){
+            calculate_vdeadline(p);
             p-> timeslice = 5;
             yield();
         }
