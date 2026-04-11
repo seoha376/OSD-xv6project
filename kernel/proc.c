@@ -346,7 +346,7 @@ kfork(void)
   np->state = RUNNABLE;
   uint64 min_vruntime, sum_w, sum_numerator;
   cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
-  np -> is_eligible = is_eligible_proc(np, min_vruntime, sum_w, sum_numerator); // recalculated parameter
+  np -> is_eligible = is_eligible_proc(np, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
 
   release(&np->lock);
   return pid;
@@ -551,9 +551,8 @@ scheduler(void)
     best = 0;
 
     for(p = proc; p < &proc[NPROC]; p++) {
-      if(p->state != RUNNABLE){
+      if(p->state != RUNNABLE)
         continue;
-      }
       
       p->is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator);
 
@@ -821,9 +820,12 @@ getnice(int pid)
   struct proc *p; // ai was used(gpt or gemini)
 
   for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
     if(p->pid == pid){
+      release(&p->lock);
       return p->nice;
     }
+    release(&p->lock);
   }
   return -1;
 }
@@ -840,13 +842,71 @@ setnice(int pid, int nice)
     nice = 39;
 
   for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
     if(p->pid == pid){
       p->nice = nice;
+      p->vdeadline = calculate_vdeadline(p);
+
+      if(p->state==RUNNABLE || p->state==RUNNING){
+        uint64 min_vruntime, sum_w, sum_numerator;
+        cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+        p -> is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
+
+      }
+      release(&p->lock);
       return 0;
     }
+    release(&p->lock);
   }
   return -1;
 }
+
+static void
+print_spaces(int n)
+{
+  while(n-- > 0)
+    printf(" ");
+}
+
+static int
+strlen2(const char *s)
+{
+  int n = 0;
+  while(s[n] != '\0')
+    n++;
+  return n;
+}
+
+static int
+digits(uint64 x)
+{
+  int n = 1;
+  while(x >= 10){
+    x /= 10;
+    n++;
+  }
+  return n;
+}
+
+static void
+print_str_field(char *s, int width)
+{
+  int len = strlen2(s);
+  printf("%s", s);
+  if(len < width)
+    print_spaces(width - len);
+}
+
+static void
+print_int_field(uint64 x, int width)
+{
+  int len = digits(x);
+  printf("%ld", x);
+  if(len < width)
+    print_spaces(width - len);
+}
+
+
 
 void
 ps(int pid)
@@ -861,20 +921,72 @@ ps(int pid)
     [ZOMBIE]   = "ZOMBIE"
   };
 
+
+  // formatting used by ai
+  print_str_field("name", 12); 
+  print_str_field("pid", 6);
+  print_str_field("state", 12);
+  print_str_field("nice", 6);
+  print_str_field("runtime/w", 12);
+  print_str_field("runtime", 10);
+  print_str_field("vruntime", 10);
+  print_str_field("vdeadline", 11);
+  print_str_field("eligible", 10);
+  print_str_field("total_tick", 10);
+  printf("\n");
+
   for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
 
     if(p->state == UNUSED){
+      release(&p->lock);
       continue;
     }
 
-    if(pid != 0 && p->pid != pid)
-    continue;
+    if(pid != 0 && p->pid != pid){
+      release(&p->lock);
+      continue;
+    }
 
 
-    printf("name=%s pid=%d state=%s nice=%d runtime=%ld vruntime=%ld vdeadline=%ld timeslice=%d eligible=%d\n",
-           p->name, p->pid, states[p->state], p->nice,
-           p->runtime*1000, p->vruntime*1000, p->vdeadline*1000,
-           p->timeslice, p->is_eligible);
+    int state = p->state;
+    int nice = p->nice;
+    int proc_pid = p->pid;
+
+    uint64 runtime = p->runtime;
+    uint64 vruntime = p->vruntime;
+    uint64 vdeadline = p->vdeadline;
+    uint64 w = weight(nice);
+
+    char name[16];
+    safestrcpy(name, p->name, sizeof(name)); // 락 잡은동안 기존 값p->name을 로컬버퍼 name에 복사. 락을 풀고 p->name을 출력하면 값 깨짐.
+
+    // Make eligibility state of ZOMBIE, SLEEPING into 0 
+    int eligible_print = 0;  
+    if (state == RUNNABLE || state == RUNNING)
+      eligible_print = p->is_eligible;
+
+    release(&p->lock);
+
+    // integer only
+    uint64 runtime_per_weight = 0;
+    if(w != 0)
+      runtime_per_weight = (runtime * 1000) / w;
+
+    // total_tick 필드가 따로 없다면 runtime을 같이 출력
+    uint64 total_tick = runtime * 1000;
+
+    print_str_field(name, 12);
+    print_int_field(proc_pid, 6);
+    print_str_field(states[state], 12);
+    print_int_field(nice, 6);
+    print_int_field(runtime_per_weight, 12);
+    print_int_field(runtime * 1000, 10);
+    print_int_field(vruntime * 1000, 10);
+    print_int_field(vdeadline * 1000, 11);
+    print_int_field(eligible_print, 10);
+    print_int_field(total_tick, 10);
+    printf("\n");
   }  
 }
 
