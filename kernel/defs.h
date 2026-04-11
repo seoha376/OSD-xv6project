@@ -108,6 +108,10 @@ uint64 meminfo(void);
 int waitpid(int pid);
 int weight(int nice);
 uint64 calculate_vdeadline(struct proc *p);
+void cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator);
+int is_eligible_proc(struct proc *p, uint64 min_vruntime, uint64 sum_w, uint64 sum_numerator);
+
+
 // swtch.S
 void            swtch(struct context*, struct context*);
 

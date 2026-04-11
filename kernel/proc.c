@@ -26,6 +26,11 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+
+
+uint64 calculate_vdeadline(struct proc *p);
+int calculate_eligibility(struct proc *p);
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -276,45 +281,11 @@ int weight(int nice){
   }
 }
 
-
-
 uint64 
-calculate_vdeadline(struct proc *p){ // input : by ai
+calculate_vdeadline(struct proc *p) { // input : by ai
   return p->vruntime + ((uint64)p->timeslice * 1024)/weight(p->nice);
 }
 
-
-int min_vruntime = 0;
-int sum_numerator = 0;
-int sum_denominator = 0;
-
-
-// int
-// calculate_eligibility(struct proc *p){
-//   for (p=proc;p<&proc[NPROC]; p++){
-//     if (p->state != RUNNING)
-//       continue;
-//     sum_numerator += (p->vruntime - min_vruntime)*weight(p->nice);
-//     sum_denominator += weight(p->nice);
-
-//     if (weight(p->nice)*sum_numerator/sum_denominator+min_vruntime-p->vruntime >= 0){
-//       p->is_eligible = 1;
-      
-//     } else p->is_eligible=0;
-    
-//   }
-// }
-
-
-
-
-
-// int 
-// calculate_eligibility(struct proc *p)
-// {
-//   int V = min(p->vruntime)+sum((p->vruntime)-min(p->vruntime))*weight(p->nice)/sum(weight(p->nice))
-//   ((V-(p->vruntime))>= 0) ? return 1 : return 0 ;
-// }
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
@@ -361,18 +332,23 @@ kfork(void)
   release(&wait_lock);
 
   acquire(&np->lock);
-  np->state = RUNNABLE;
-  release(&np->lock);
 
+  // inherit parent parameter
   np -> nice = p -> nice;
-  np -> vruntime = p -> vruntime; // inherit parent parameter
+  np -> vruntime = p -> vruntime; 
 
+  // inherit parent parameter
   np -> runtime = 0;
-  np -> timeslice = 5; // not inherit parent parameter
+  np -> timeslice = 5;
 
   np -> vdeadline = calculate_vdeadline(np);
-  // np -> is_eligible = calculate_eligibility(np); // recalculated parameter
 
+  np->state = RUNNABLE;
+  uint64 min_vruntime, sum_w, sum_numerator;
+  cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+  np -> is_eligible = is_eligible_proc(np, min_vruntime, sum_w, sum_numerator); // recalculated parameter
+
+  release(&np->lock);
   return pid;
 }
 
@@ -485,6 +461,61 @@ kwait(uint64 addr)
   }
 }
 
+
+
+void
+cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator){
+  struct proc *p;
+  int first = 1;
+
+  *min_vruntime = 0;
+  *sum_w = 0;
+  *sum_numerator = 0;
+
+
+  // 1) what is minimum of vruntime?
+  for(p=proc; p< &proc[NPROC]; p++){
+    if (p->state!= RUNNABLE && p->state != RUNNING)
+      continue;
+
+    if (first || *min_vruntime > p->vruntime){
+      *min_vruntime = p->vruntime; // 별을 붙여야만 한대. 왠진 모름
+      first = 0;
+    }
+  }
+
+  if(first) // runqueue is empty?
+    return;
+
+  // 2) sigma caculation 
+  for (p=proc; p< &proc[NPROC]; p++){
+    uint64 w = 0;
+
+    if(p->state != RUNNABLE && p->state != RUNNING)
+      continue;
+    
+    w = weight(p->nice);
+    *sum_w += w;
+    *sum_numerator += w*(p->vruntime - *min_vruntime);
+    }
+  }
+
+
+int
+is_eligible_proc(struct proc *p, uint64 min_vruntime, uint64 sum_w, uint64 sum_numerator){
+    if(sum_w==0)
+      return 0;
+
+    if(p->state != RUNNABLE && p->state != RUNNING)
+      return 0;
+
+    // check the lag is positive (if the process is eligible)
+    return sum_numerator>=(p->vruntime - min_vruntime)*sum_w;
+  }
+
+
+
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -496,6 +527,7 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *best;
   struct cpu *c = mycpu();
 
   c->proc = 0;
@@ -510,32 +542,49 @@ scheduler(void)
     intr_off();
 
     int found = 0;
+    uint64 min_vruntime = 0;
+    uint64 sum_w = 0;
+    uint64 sum_numerator = 0;
+
+    cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+
+    best = 0;
+
     for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-
-      if(p->state == RUNNABLE || p->state == RUNNING){
-        // p->is_eligible = calculate_eligibility(p);
+      if(p->state != RUNNABLE){
+        continue;
       }
+      
+      p->is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator);
 
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
-      }
-      release(&p->lock);
+      if(p->is_eligible == 0)
+        continue;
+      
+      if(best == 0 || p->vdeadline < best->vdeadline)
+        best = p;
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
+      
+
+      if(best){
+        acquire(&best->lock);
+        if(best->state == RUNNABLE) {
+          best->state = RUNNING;
+          // Switch to chosen process.  It is the process's job
+          // to release its lock and then reacquire it
+          // before jumping back to us.
+          c->proc = best;
+          swtch(&c->context, &best->context);
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          found = 1;
+        }
+        release(&best->lock);
+      }
+      if(found == 0) {
+        // nothing to run; stop running on this core until an interrupt.
+        asm volatile("wfi");
     }
   }
 }
@@ -824,7 +873,7 @@ ps(int pid)
 
     printf("name=%s pid=%d state=%s nice=%d runtime=%ld vruntime=%ld vdeadline=%ld timeslice=%d eligible=%d\n",
            p->name, p->pid, states[p->state], p->nice,
-           p->runtime * 1000, p->vruntime, p->vdeadline,
+           p->runtime*1000, p->vruntime*1000, p->vdeadline*1000,
            p->timeslice, p->is_eligible);
   }  
 }

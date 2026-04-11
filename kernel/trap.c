@@ -160,13 +160,13 @@ kerneltrap()
     struct proc *p = myproc();
     if(p && p->state == RUNNING){
         p->runtime += 1;
-        p->vruntime += 1024*1000/ weight(p->nice);
+        p->vruntime += 1024/ weight(p->nice);
         p->timeslice -= 1;
 
         if(p->timeslice <= 0){
-            calculate_vdeadline(p);
-            p-> timeslice = 5;
-            yield();
+          p-> timeslice = 5;
+          p->vdeadline = calculate_vdeadline(p);
+          yield();
         }
     }
 }
