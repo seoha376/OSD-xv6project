@@ -322,33 +322,29 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
-
   pid = np->pid;
 
-  release(&np->lock);
 
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
 
-  acquire(&np->lock);
 
   // inherit parent parameter
   np -> nice = p -> nice;
   np -> vruntime = p -> vruntime; 
-
   // inherit parent parameter
   np -> runtime = 0;
   np -> timeslice = 5;
-
   np -> vdeadline = calculate_vdeadline(np);
-
   np->state = RUNNABLE;
-  uint64 min_vruntime, sum_w, sum_numerator;
-  cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
-  np -> is_eligible = is_eligible_proc(np, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
 
   release(&np->lock);
+
+  // uint64 min_vruntime, sum_w, sum_numerator;
+  // cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+  // np -> is_eligible = is_eligible_proc(np, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
+
   return pid;
 }
 
@@ -475,28 +471,36 @@ cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator){
 
   // 1) what is minimum of vruntime?
   for(p=proc; p< &proc[NPROC]; p++){
-    if (p->state!= RUNNABLE && p->state != RUNNING)
+    acquire(&p->lock);
+    if (p->state!= RUNNABLE && p->state != RUNNING){
+      release(&p->lock);
       continue;
+    }
 
     if (first || *min_vruntime > p->vruntime){
       *min_vruntime = p->vruntime; // 별을 붙여야만 한대. 왠진 모름
       first = 0;
     }
+    release(&p->lock);
   }
 
-  if(first) // runqueue is empty?
-    return;
+  // if(first) // runqueue is empty?
+  //   return;
 
   // 2) sigma caculation 
   for (p=proc; p< &proc[NPROC]; p++){
-    uint64 w = 0;
+    acquire(&p->lock);
 
-    if(p->state != RUNNABLE && p->state != RUNNING)
+    if(p->state != RUNNABLE && p->state != RUNNING){
+      release(&p->lock);
       continue;
+    }
+     
     
-    w = weight(p->nice);
+    uint64 w = weight(p->nice);
     *sum_w += w;
     *sum_numerator += w*(p->vruntime - *min_vruntime);
+    release(&p->lock);
     }
   }
 
@@ -551,27 +555,43 @@ scheduler(void)
     best = 0;
 
     for(p = proc; p < &proc[NPROC]; p++) {
-      if(p->state != RUNNABLE)
+      acquire(&p->lock);
+
+      if(p->state != RUNNABLE){
+        release(&p->lock);
         continue;
+      }
       
       p->is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator);
 
-      if(p->is_eligible == 0)
+      if(p->is_eligible == 0){
+        release(&p->lock); // save p->lock into best 
         continue;
+      }
+        
       
-      if(best == 0 || p->vdeadline < best->vdeadline)
+      if(best == 0){
         best = p;
+        continue;
+      }
+      
+      if(p->vdeadline < best->vdeadline){
+        release(&best->lock);
+        best = p; // new best->lock maintained
+      } else {
+        release(&p->lock);
+      }
     }
       
 
       if(best){
-        acquire(&best->lock);
         if(best->state == RUNNABLE) {
           best->state = RUNNING;
           // Switch to chosen process.  It is the process's job
           // to release its lock and then reacquire it
           // before jumping back to us.
           c->proc = best;
+
           swtch(&c->context, &best->context);
 
           // Process is done running for now.
@@ -822,8 +842,9 @@ getnice(int pid)
   for(p = proc; p < &proc[NPROC]; p++){
     acquire(&p->lock);
     if(p->pid == pid){
+      int n = p->nice;
       release(&p->lock);
-      return p->nice;
+      return n;
     }
     release(&p->lock);
   }
@@ -835,6 +856,7 @@ int
 setnice(int pid, int nice)
 {
   struct proc *p;
+  int found = 0;
 
   if(nice < 0)
     nice = 0;
@@ -847,18 +869,21 @@ setnice(int pid, int nice)
       p->nice = nice;
       p->vdeadline = calculate_vdeadline(p);
 
-      if(p->state==RUNNABLE || p->state==RUNNING){
-        uint64 min_vruntime, sum_w, sum_numerator;
-        cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
-        p -> is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
-
-      }
+      // if(p->state==RUNNABLE || p->state==RUNNING){
+      //   uint64 min_vruntime, sum_w, sum_numerator;
+      //   cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+      //   p -> is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
+      // }
       release(&p->lock);
-      return 0;
+      found = 1;
+      break;
     }
     release(&p->lock);
   }
-  return -1;
+  if(!found)
+    return -1;
+  
+  return 0;
 }
 
 static void
