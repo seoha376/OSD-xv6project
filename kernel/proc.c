@@ -283,7 +283,7 @@ int weight(int nice){
 
 uint64 
 calculate_vdeadline(struct proc *p) { // input : by ai
-  return p->vruntime + ((uint64)p->timeslice * 1024)/weight(p->nice);
+  return p->vruntime + ((uint64)p->timeslice * 1024*1000)/weight(p->nice);
 }
 
 
@@ -607,7 +607,6 @@ scheduler(void)
     }
   }
 }
-
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
@@ -726,6 +725,11 @@ wakeup(void *chan)
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
+
+        p->timeslice=5;
+        p->vdeadline = calculate_vdeadline(p);
+
+        p->is_eligible = 1;
       }
       release(&p->lock);
     }
@@ -1006,9 +1010,9 @@ ps(int pid)
     print_str_field(states[state], 12);
     print_int_field(nice, 6);
     print_int_field(runtime_per_weight, 12);
-    print_int_field(runtime * 1000, 10);
-    print_int_field(vruntime * 1000, 10);
-    print_int_field(vdeadline * 1000, 11);
+    print_int_field(runtime, 10);
+    print_int_field(vruntime, 10);
+    print_int_field(vdeadline, 11);
     print_int_field(eligible_print, 10);
     print_int_field(total_tick, 10);
     printf("\n");

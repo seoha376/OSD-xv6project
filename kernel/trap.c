@@ -81,8 +81,19 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2){
+    if(p && p->state == RUNNING){
+    p->runtime += 1;
+    p->vruntime += 1024*1000 / weight(p->nice);   // 이 줄은 아까 말씀하신 대로 스케일링 필요하면 같이 수정
+    p->timeslice -= 1;
+
+    if(p->timeslice <= 0){
+      p->timeslice = 5;
+      p->vdeadline = calculate_vdeadline(p);
+      yield();
+    }
+  }
+}
 
   prepare_return();
 
@@ -91,7 +102,8 @@ usertrap(void)
 
   // return to trampoline.S; satp value in a0.
   return satp;
-}
+  }
+
 
 //
 // set up trapframe and control registers for a return to user space
@@ -160,7 +172,7 @@ kerneltrap()
     struct proc *p = myproc();
     if(p && p->state == RUNNING){
         p->runtime += 1;
-        p->vruntime += 1024/ weight(p->nice);
+        p->vruntime += (1024*1000)/ weight(p->nice);
         p->timeslice -= 1;
 
         if(p->timeslice <= 0){
