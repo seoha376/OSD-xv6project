@@ -561,7 +561,7 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
 
-      if(p->state != RUNNABLE){ // RUNNING 은 왜없음?
+      if(p->state != RUNNABLE){
         release(&p->lock);
         continue;
       }
@@ -576,7 +576,7 @@ scheduler(void)
       
       if(best == 0){
         best = p;
-        continue; // continue 왜있음?
+        continue;
       }
       
       if(p->vdeadline < best->vdeadline){
@@ -1002,7 +1002,6 @@ ps(int pid)
 
 
 
-    // total_tick 필드가 따로 없다면 runtime을 같이 출력
     uint64 runtime_mt   = runtime;
     uint64 vruntime_mt  = vruntime;
     uint64 vdeadline_mt = vdeadline;
