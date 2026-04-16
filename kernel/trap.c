@@ -84,7 +84,6 @@ usertrap(void)
   if(which_dev == 2){
     if(p && p->state == RUNNING){
     p->runtime += 1;
-    // p->vruntime += 1024*(p->vruntime) / weight(p->nice);
     p->vruntime += 1024*1000 / weight(p->nice);
     p->timeslice -= 1;
 
@@ -163,11 +162,6 @@ kerneltrap()
     printf("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, r_sepc(), r_stval());
     panic("kerneltrap");
   }
-
-  // give up the CPU if this is a timer interrupt.
-  // if(which_dev == 2 && myproc() != 0)
-
-  //       yield();
 
   if(which_dev == 2){
     struct proc *p = myproc();
