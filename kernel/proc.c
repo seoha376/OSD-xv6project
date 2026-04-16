@@ -18,6 +18,9 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
+extern uint ticks;
+extern struct spinlock tickslock;
+
 extern char trampoline[]; // trampoline.S
 
 // helps ensure that wakeups of wait()ing
@@ -478,7 +481,7 @@ cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator){
     }
 
     if (first || *min_vruntime > p->vruntime){
-      *min_vruntime = p->vruntime; // 별을 붙여야만 한대. 왠진 모름
+      *min_vruntime = p->vruntime;
       first = 0;
     }
     release(&p->lock);
@@ -500,6 +503,7 @@ cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator){
     uint64 w = weight(p->nice);
     *sum_w += w;
     *sum_numerator += w*(p->vruntime - *min_vruntime);
+    
     release(&p->lock);
     }
   }
@@ -557,7 +561,7 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
 
-      if(p->state != RUNNABLE){
+      if(p->state != RUNNABLE){ // RUNNING 은 왜없음?
         release(&p->lock);
         continue;
       }
@@ -572,7 +576,7 @@ scheduler(void)
       
       if(best == 0){
         best = p;
-        continue;
+        continue; // continue 왜있음?
       }
       
       if(p->vdeadline < best->vdeadline){
@@ -872,12 +876,6 @@ setnice(int pid, int nice)
     if(p->pid == pid){
       p->nice = nice;
       p->vdeadline = calculate_vdeadline(p);
-
-      // if(p->state==RUNNABLE || p->state==RUNNING){
-      //   uint64 min_vruntime, sum_w, sum_numerator;
-      //   cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
-      //   p -> is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator); // recalculate eligibility
-      // }
       release(&p->lock);
       found = 1;
       break;
@@ -950,6 +948,11 @@ ps(int pid)
     [ZOMBIE]   = "ZOMBIE"
   };
 
+  uint total_ticks_snapshot;
+  acquire(&tickslock);
+  total_ticks_snapshot = ticks;
+  release(&tickslock);
+
 
   // formatting used by ai
   print_str_field("name", 12); 
@@ -988,7 +991,7 @@ ps(int pid)
     uint64 w = weight(nice);
 
     char name[16];
-    safestrcpy(name, p->name, sizeof(name)); // 락 잡은동안 기존 값p->name을 로컬버퍼 name에 복사. 락을 풀고 p->name을 출력하면 값 깨짐.
+    safestrcpy(name, p->name, sizeof(name));
 
     // Make eligibility state of ZOMBIE, SLEEPING into 0 
     int eligible_print = 0;  
@@ -997,22 +1000,32 @@ ps(int pid)
 
     release(&p->lock);
 
+
+
+    // total_tick 필드가 따로 없다면 runtime을 같이 출력
+    uint64 runtime_mt   = runtime * 1000;
+    uint64 vruntime_mt  = vruntime * 1000;
+    uint64 vdeadline_mt = vdeadline * 1000;
+    uint64 total_tick = (uint64)total_ticks_snapshot * 1000;
+
+
+
+
     // integer only
     uint64 runtime_per_weight = 0;
     if(w != 0)
       runtime_per_weight = (runtime * 1000) / w;
 
-    // total_tick 필드가 따로 없다면 runtime을 같이 출력
-    uint64 total_tick = runtime * 1000;
+    
 
     print_str_field(name, 12);
     print_int_field(proc_pid, 6);
     print_str_field(states[state], 12);
     print_int_field(nice, 6);
     print_int_field(runtime_per_weight, 12);
-    print_int_field(runtime, 10);
-    print_int_field(vruntime, 10);
-    print_int_field(vdeadline, 11);
+    print_int_field(runtime_mt, 10);
+    print_int_field(vruntime_mt, 10);
+    print_int_field(vdeadline_mt, 11);
     print_int_field(eligible_print, 10);
     print_int_field(total_tick, 10);
     printf("\n");

@@ -84,7 +84,8 @@ usertrap(void)
   if(which_dev == 2){
     if(p && p->state == RUNNING){
     p->runtime += 1;
-    p->vruntime += 1024*1000 / weight(p->nice);   // 이 줄은 아까 말씀하신 대로 스케일링 필요하면 같이 수정
+    // p->vruntime += 1024*(p->vruntime) / weight(p->nice);
+    p->vruntime += 1024*1000 / weight(p->nice);
     p->timeslice -= 1;
 
     if(p->timeslice <= 0){
