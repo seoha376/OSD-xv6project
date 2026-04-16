@@ -1062,7 +1062,7 @@ waitpid(int pid)
     
     if(!havekids || p->killed){ // ai was used(gpt or gemini)
       release(&wait_lock);
-      return -1; //실패 -> -1 반환
+      return -1; //fail -> return -1
     }
 
     
