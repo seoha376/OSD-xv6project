@@ -1003,10 +1003,10 @@ ps(int pid)
 
 
     // total_tick 필드가 따로 없다면 runtime을 같이 출력
-    uint64 runtime_mt   = runtime * 1000;
-    uint64 vruntime_mt  = vruntime * 1000;
-    uint64 vdeadline_mt = vdeadline * 1000;
-    uint64 total_tick = (uint64)total_ticks_snapshot * 1000;
+    uint64 runtime_mt   = runtime;
+    uint64 vruntime_mt  = vruntime;
+    uint64 vdeadline_mt = vdeadline;
+    uint64 total_tick = (uint64)total_ticks_snapshot;
 
 
 
