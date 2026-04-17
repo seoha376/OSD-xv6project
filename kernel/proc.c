@@ -487,8 +487,12 @@ cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator){
     release(&p->lock);
   }
 
-  // if(first) // runqueue is empty?
-  //   return;
+
+  if(first)
+    return;
+
+
+
 
   // 2) sigma caculation 
   for (p=proc; p< &proc[NPROC]; p++){
@@ -723,6 +727,7 @@ void
 wakeup(void *chan)
 {
   struct proc *p;
+  uint64 min_vruntime, sum_w, sum_numerator;
 
   for(p = proc; p < &proc[NPROC]; p++) {
     if(p != myproc()){
@@ -730,13 +735,22 @@ wakeup(void *chan)
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
 
-        p->timeslice=5;
+        p->timeslice = 5;
         p->vdeadline = calculate_vdeadline(p);
 
         p->is_eligible = 1;
       }
       release(&p->lock);
     }
+  }
+
+
+  cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+
+  for(p=proc; p< &proc[NPROC];p++){
+    acquire(&p->lock);
+    p->is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator);
+    release(&p->lock);
   }
 }
 
@@ -865,6 +879,7 @@ setnice(int pid, int nice)
 {
   struct proc *p;
   int found = 0;
+  uint64 min_vruntime, sum_w, sum_numerator;
 
   if(nice < 0)
     nice = 0;
@@ -884,6 +899,15 @@ setnice(int pid, int nice)
   }
   if(!found)
     return -1;
+
+
+  cal_runqueue_stats(&min_vruntime, &sum_w, &sum_numerator);
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    p->is_eligible = is_eligible_proc(p, min_vruntime, sum_w, sum_numerator);
+    release(&p->lock);
+  }
   
   return 0;
 }
@@ -993,10 +1017,7 @@ ps(int pid)
     char name[16];
     safestrcpy(name, p->name, sizeof(name));
 
-    // Make eligibility state of ZOMBIE, SLEEPING into 0 
-    int eligible_print = 0;  
-    if (state == RUNNABLE || state == RUNNING)
-      eligible_print = p->is_eligible;
+    int is_eligible = p->is_eligible;
 
     release(&p->lock);
 
@@ -1008,9 +1029,6 @@ ps(int pid)
     uint64 total_tick = (uint64)total_ticks_snapshot;
 
 
-
-
-    // integer only
     uint64 runtime_per_weight = 0;
     if(w != 0)
       runtime_per_weight = (runtime * 1000) / w;
@@ -1025,7 +1043,7 @@ ps(int pid)
     print_int_field(runtime_mt, 10);
     print_int_field(vruntime_mt, 10);
     print_int_field(vdeadline_mt, 11);
-    print_int_field(eligible_print, 10);
+    print_int_field(is_eligible, 10);
     print_int_field(total_tick, 10);
     printf("\n");
   }  
