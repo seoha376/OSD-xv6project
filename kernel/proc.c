@@ -952,7 +952,7 @@ static void
 print_int_field(uint64 x, int width)
 {
   int len = digits(x);
-  printf("%ld", x);
+  printf("%lu", x);
   if(len < width)
     print_spaces(width - len);
 }
