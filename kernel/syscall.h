@@ -25,3 +25,7 @@
 #define SYS_ps 25
 #define SYS_meminfo 26
 #define SYS_waitpid 27
+#define SYS_mmap 28
+#define SYS_munmap  29
+#define SYS_freemem 30
+#define MAXMMAP 64

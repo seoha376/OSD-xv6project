@@ -113,6 +113,23 @@ uint64 calculate_vdeadline(struct proc *p);
 void cal_runqueue_stats(uint64 *min_vruntime, uint64 *sum_w, uint64 *sum_numerator);
 int is_eligible_proc(struct proc *p, uint64 min_vruntime, uint64 sum_w, uint64 sum_numerator);
 
+uint64 usertrap(void);
+void kerneltrap(void);
+void prepare_return(void);
+
+uint64 mmap(uint64 addr, int length, int prot, int flags, int fd, int offset);
+int munmap(uint64 addr);
+int freemem(void);
+struct mmap_area;
+struct mmap_area* find_mmap_area(struct proc*, uint64);
+// mmap lazy allocation page fault를 처리한다.
+// 성공하면 0, 실패하면 -1 반환.
+int mmap_handle_pagefault(struct proc *p, uint64 fault_va, uint64 scause);
+
+void mmap_cleanup(struct proc *p);
+
+
+
 
 // swtch.S
 void            swtch(struct context*, struct context*);

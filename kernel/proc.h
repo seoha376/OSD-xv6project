@@ -81,6 +81,22 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+struct file; // struct mmap_area 안에서 struct file *f를 쓰기 때문에 필요
+struct proc;
+
+
+struct mmap_area {
+struct file *f;
+uint64 addr;
+int length;
+int offset;
+int prot;
+int flags;
+struct proc *p;
+};
+
+
+
 // Per-process state
 struct proc {
   struct spinlock lock;

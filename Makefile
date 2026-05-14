@@ -149,7 +149,12 @@ UPROGS=\
     $U/_tni\
     $U/_tcfs\
     $U/_tnw\
-    $U/_tvr
+    $U/_tvr\
+	$U/_mmaptest\
+	$U/_munmap_test\
+	$U/_mmap_more_test\
+	$U/_fork_test\
+	$U/_pa3_test\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

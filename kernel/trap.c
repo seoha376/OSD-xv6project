@@ -39,6 +39,8 @@ usertrap(void)
 {
   int which_dev = 0;
 
+  // user mode에서 들어온 trap인지 확인한다.
+  // kernel mode에서 usertrap으로 들어오면 심각한 오류다.
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
@@ -57,25 +59,54 @@ usertrap(void)
     if(killed(p))
       kexit(-1);
 
-    // sepc points to the ecall instruction,
-    // but we want to return to the next instruction.
+    // ecall 명령어는 4바이트이므로
+    // syscall 이후 다음 명령어로 넘어가게 epc 증가.
     p->trapframe->epc += 4;
 
-    // an interrupt will change sepc, scause, and sstatus,
-    // so enable only now that we're done with those registers.
+    // syscall 처리 중 interrupt 허용.
     intr_on();
 
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else if((r_scause() == 15 || r_scause() == 13) &&
-            vmfault(p->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
-    // page fault on lazily-allocated page
-  } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+  } else if(r_scause() == 13 || r_scause() == 15){
+  // user page fault 처리
+  //
+  // scause == 13: load page fault, 즉 read 중 page fault
+  // scause == 15: store/AMO page fault, 즉 write 중 page fault
+  //
+  // r_stval()에는 fault가 발생한 가상주소가 들어 있다.  
+  uint64 fault_va = r_stval();
+
+    // 1순위: mmap lazy fault 처리
+  //
+  // fault_va가 mmap_area 안에 있으면
+  // mmap_handle_pagefault()가 한 페이지만 kalloc하고 mappages한다.
+  if(mmap_handle_pagefault(p, fault_va, r_scause()) == 0){
+    // mmap lazy page fault 처리 성공
+  }
+
+  // 2순위: 기존 xv6 lazy allocation 처리
+  //
+  // mmap 영역이 아니면 기존 vmfault()에게 처리 기회를 준다.
+  // 기존 코드의 인자 의미를 유지한다.
+  else if(vmfault(p->pagetable, fault_va, (r_scause() == 13) ? 1 : 0) != 0){
+    // 기존 lazy allocation page fault 처리 성공
+  }
+
+  // 둘 다 처리하지 못하면 잘못된 접근이다.
+  else {
+    printf("usertrap: page fault failed pid=%d va=0x%lx scause=0x%lx\n",
+           p->pid, fault_va, r_scause());
+  // } &&
+  //           vmfault(p->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
+  //   // page fault on lazily-allocated page
+  // } else {
+  //   printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+  //   printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
     setkilled(p);
   }
+}
 
   if(killed(p))
     kexit(-1);

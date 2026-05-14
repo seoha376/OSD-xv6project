@@ -295,6 +295,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // frees any allocated pages on failure.
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+// 부모 메모리를 자식에게 복붙!
 {
   pte_t *pte;
   uint64 pa, i;

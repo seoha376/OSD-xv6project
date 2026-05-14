@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+
 
 struct cpu cpus[NCPU];
 
@@ -28,6 +32,8 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+struct mmap_area mmap_areas[MAXMMAP];
+static void mmap_rollback(struct proc *p, uint64 start, uint64 end);
 
 
 
@@ -115,7 +121,7 @@ allocpid()
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
 static struct proc*
-allocproc(void)
+allocproc(void) // 자식 프로세스의 구조 생성.
 {
   struct proc *p;
 
@@ -174,6 +180,8 @@ freeproc(struct proc *p)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
+    mmap_cleanup(p);
+  if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
@@ -229,6 +237,507 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
 }
+
+// 프로세스 p의 mmap_area 배열에서
+// 가상주소 va를 포함하는 mmap 영역을 찾는다.
+struct mmap_area*
+find_mmap_area(struct proc *p, uint64 va)
+{
+  for(int i = 0; i < MAXMMAP; i++){
+    struct mmap_area *ma = &mmap_areas[i];
+
+    // 빈 슬롯은 건너뛴다.
+    // length == 0이면 active mapping이 아니라고 본다.
+    if(ma->length == 0)
+      continue;
+
+    // 혹시 전역 mmap_area처럼 쓰는 코드와 섞여 있어도 안전하게
+    // 현재 프로세스 소유 mapping만 검사한다.
+    // if(ma->p != p)
+    //   continue;
+
+    // va가 [addr, addr + length) 범위 안에 있으면 해당 mapping이다.
+    if(ma->addr <= va && va < ma->addr + ma->length)
+      return ma;
+  }
+
+  return 0;
+}
+
+// lazy mmap 영역에서 page fault가 났을 때
+// page validation(정상주소인지 여부 확인)을 진행한 뒤
+// fault 난 가상주소 한 페이지를 실제 물리 페이지에 연결한다.
+int
+mmap_handle_pagefault(struct proc *p, uint64 fault_va, uint64 scause)
+{
+  struct mmap_area *ma;
+  uint64 va;
+  char *mem;
+  int perm;
+  uint64 page_offset;
+  int n;
+
+  // fault_va는 페이지 중간 주소일 수 있으므로
+  // 실제 매핑할 가상주소는 page boundary로 내린다.
+  va = PGROUNDDOWN(fault_va);
+
+  // fault 난 주소가 현재 프로세스의 mmap 영역 안에 있는지 찾는다.
+  ma = find_mmap_area(p, va);
+  if(ma == 0)
+    return -1;
+  // read page fault: scause == 13
+  // PROT_READ 없는 영역을 읽으려 하면 실패.
+  if(scause == 13){
+    if((ma->prot & PROT_READ) == 0)
+      return -1;
+  }
+
+  // write page fault: scause == 15
+  // PROT_WRITE 없는 영역에 쓰려 하면 실패.
+  else if(scause == 15){
+    if((ma->prot & PROT_WRITE) == 0)
+      return -1;
+  }
+
+  // 그 외 fault 원인은 이 함수가 처리하지 않는다.
+  else {
+    return -1;
+  }
+
+  // PTE 권한 구성.
+  // user page이므로 PTE_U는 반드시 필요하다.
+  perm = PTE_U;
+
+  // mmap prot에 따라 읽기 권한 부여.
+  if(ma->prot & PROT_READ)
+    perm |= PTE_R;
+
+  // mmap prot에 따라 쓰기 권한 부여.
+  if(ma->prot & PROT_WRITE)
+    perm |= PTE_W;
+
+  // lazy mmap의 핵심:
+  // fault 난 페이지 딱 한 장만 할당한다.
+  mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  // anonymous mmap은 zero-filled page여야 한다.
+  // file-backed mmap도 먼저 0으로 채우면
+  // 파일에서 덜 읽힌 나머지 부분이 안전하게 0으로 남는다.
+  memset(mem, 0, PGSIZE);
+
+  // MAP_ANONYMOUS가 아니면 file-backed mmap이다.
+  if((ma->flags & MAP_ANONYMOUS) == 0){
+    // file-backed인데 file 포인터가 없으면 잘못된 mapping.
+    if(ma->f == 0){
+      kfree(mem);
+      return -1;
+    }
+
+    // mmap 영역 내부에서 fault 난 page의 위치.
+    // 예: mapping 시작이 0x40000000이고 fault page가 0x40001000이면 4096.
+    page_offset = va - ma->addr;
+
+    // file offset + mapping 내부 offset 위치에서 한 페이지 읽는다.
+    ilock(ma->f->ip);
+    n = readi(ma->f->ip, 0, (uint64)mem, ma->offset + page_offset, PGSIZE);
+    iunlock(ma->f->ip);
+
+    // readi 실패 시 할당한 page를 반환하고 실패 처리.
+    if(n < 0){
+      kfree(mem);
+      return -1;
+    }
+  }
+
+  // 가상주소 va를 방금 할당한 물리 페이지 mem에 연결한다.
+  // 실패하면 반드시 kfree 해서 누수를 막는다.
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) < 0){
+    kfree(mem);
+    return -1;
+  }
+
+  return 0;
+}
+
+
+static void
+mmap_rollback(struct proc *p, uint64 start, uint64 end)
+{
+  for(uint64 a = start; a < end; a += PGSIZE){
+    pte_t *pte = walk(p->pagetable, a, 0);
+
+    if(pte && (*pte & PTE_V)){
+      uint64 pa = PTE2PA(*pte);
+      kfree((void*)pa);
+      uvmunmap(p->pagetable, a, 1, 0);
+    }
+  }
+}
+
+uint64
+mmap(uint64 addr, int length, int prot, int flags, int fd, int offset)
+{
+    struct proc *p = myproc();
+    
+
+
+    // addr page alignment 실패
+    if(addr % PGSIZE != 0)
+    return 0;
+    // length 실패
+    if(length <= 0 || length % PGSIZE != 0)
+      return 0;
+    // prot 실패
+    if(prot != PROT_READ && prot != (PROT_READ | PROT_WRITE))
+      return 0;
+
+    // 실제 주소 계산
+    uint64 va = MMAPBASE + addr;
+    uint64 end = va + length;
+
+
+
+
+    // 파일 매핑 실패
+    struct file *f = 0;
+    if(flags & MAP_ANONYMOUS){
+    if(fd != -1)
+      return 0;
+    } else {
+      if(fd < 0 || fd >= NOFILE || p->ofile[fd] == 0)
+        return 0;
+
+      if(p->ofile[fd] == 0)
+        return 0;
+      f = p->ofile[fd];
+
+      if((prot & PROT_READ) && !f->readable)
+        return 0;
+      if((prot & PROT_WRITE) && !f->writable)
+        return 0;
+    }
+
+    // 겹치는 mmap 영역 실패
+    for(int i = 0; i < MAXMMAP; i++){
+      if(mmap_areas[i].p == p){
+        uint64 a = mmap_areas[i].addr;
+        uint64 b = a + mmap_areas[i].length;
+
+        if(!(end <= a || va >= b))
+          return 0;
+      }
+    }
+
+
+
+    // 1. 빈 mmap 슬롯 찾기
+    int slot = -1;
+
+    for(int i = 0; i < MAXMMAP; i++){
+        if(mmap_areas[i].p == 0){
+            slot = i;
+            break;
+        }
+    }
+
+    // 빈 슬롯 없음 실패 처리
+    if(slot < 0)
+      return 0;
+
+    // 2. metadata 저장
+    mmap_areas[slot].addr = va;
+    mmap_areas[slot].length = length;
+    mmap_areas[slot].offset = offset;
+    mmap_areas[slot].prot = prot;
+    mmap_areas[slot].flags = flags;
+    mmap_areas[slot].p = p;
+
+    // file-backed면 파일 저장
+    if(!(flags & MAP_ANONYMOUS)){
+        mmap_areas[slot].f = filedup(p->ofile[fd]);
+    } else {
+        mmap_areas[slot].f = 0;
+    }
+
+    // 3. MAP_POPULATE면 즉시 페이지 생성
+    if(flags & MAP_POPULATE){
+        for(uint64 a = va; a < va + length; a += PGSIZE){
+            // POPULATE 중 kalloc 실패
+            char *mem = kalloc();
+
+            if(mem == 0){
+
+                mmap_rollback(p, va, a);
+
+                if(mmap_areas[slot].f)
+                    fileclose(mmap_areas[slot].f);
+
+                memset(&mmap_areas[slot], 0,
+                       sizeof(mmap_areas[slot]));
+                
+                return 0;
+            }
+
+            if(mem == 0){
+              // 이미 할당한 페이지 rollback 필요
+              return 0;
+            }
+
+            memset(mem, 0, PGSIZE);
+
+            // file-backed면 파일 읽기
+            if(!(flags & MAP_ANONYMOUS)){
+
+                int pageoff = a - va;
+
+                ilock(mmap_areas[slot].f->ip);
+
+                readi(mmap_areas[slot].f->ip,
+                      0,
+                      (uint64)mem,
+                      offset + pageoff,
+                      PGSIZE);
+
+                iunlock(mmap_areas[slot].f->ip);
+            }
+
+            int perm = PTE_U | PTE_R;
+
+            if(prot & PROT_WRITE)
+                perm |= PTE_W;
+
+            if(mappages(p->pagetable,
+                     a,
+                     PGSIZE,
+                     (uint64)mem,
+                     perm) < 0){
+                    kfree(mem);
+
+                    mmap_rollback(p, va, a);
+                                
+                    if(mmap_areas[slot].f)
+                        fileclose(mmap_areas[slot].f);
+                                
+                    memset(&mmap_areas[slot], 0,
+                           sizeof(mmap_areas[slot]));
+                    
+                    return 0; 
+                    }
+        }
+    }
+
+    // 4. 성공 시 시작 주소 반환
+    return va;  
+}
+
+
+
+int
+munmap(uint64 addr)
+{
+  struct proc *p = myproc();
+
+  // munmap은 mmap으로 받은 시작 주소만 인자로 받아야 하므로
+  // page aligned 주소가 아니면 잘못된 요청으로 처리한다.
+  if(addr % PGSIZE != 0)
+    return -1;
+
+  struct mmap_area *ma = 0;
+
+  // 현재 구현은 전역 mmap_areas[]를 사용하므로,
+  // 현재 프로세스 p가 소유하고 시작 주소가 addr인 mapping을 찾는다.
+  // addr이 region 중간 주소이면 실패해야 한다.
+  for(int i = 0; i < MAXMMAP; i++){
+    if(mmap_areas[i].p == p && mmap_areas[i].addr == addr){
+      ma = &mmap_areas[i];
+      break;
+    }
+  }
+
+  // 해당 시작 주소를 가진 mmap region이 없으면 실패.
+  if(ma == 0)
+    return -1;
+
+  // mmap region 안의 page들을 하나씩 확인한다.
+  // lazy mmap에서는 아직 접근하지 않은 page가 있을 수 있으므로
+  // region 전체를 무조건 uvmunmap하면 안 된다.
+  for(uint64 va = ma->addr; va < ma->addr + ma->length; va += PGSIZE){
+    // walk(..., 0)은 새 page table을 만들지 않고
+    // 기존 PTE가 있는지만 확인한다.
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    // 아직 fault가 안 난 lazy page라면 PTE 자체가 없을 수 있다.
+    // 이 경우 해제할 물리 page도 없으므로 그냥 넘어간다.
+    if(pte == 0)
+      continue;
+
+    // PTE가 있어도 valid하지 않으면 실제 매핑된 page가 아니다.
+    if((*pte & PTE_V) == 0)
+      continue;
+
+    // R/W/X 중 하나라도 있어야 leaf PTE이다.
+    // leaf가 아닌 page-table 중간 노드는 uvmunmap 대상이 아니다.
+    if((*pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      continue;
+
+    // 실제로 매핑된 leaf page만 unmap하고,
+    // 마지막 인자 1로 물리 page도 kfree한다.
+    uvmunmap(p->pagetable, va, 1, 1);
+  }
+
+  // file-backed mmap이었다면 mmap_area가 file reference를 들고 있으므로
+  // mapping 제거 시 file reference count를 줄인다.
+  // anonymous mmap이면 ma->f는 0이므로 아무것도 하지 않는다.
+  if(ma->f)
+    fileclose(ma->f);
+
+  // mmap_area slot을 비워서 이후 mmap에서 재사용 가능하게 한다.
+  memset(ma, 0, sizeof(*ma));
+
+  // PDF 기준 성공 반환값은 1.
+  return 1;
+}
+
+void
+mmap_cleanup(struct proc *p)
+{
+  // 전역 mmap_areas[] 중에서 종료되는 프로세스 p가 소유한
+  // 모든 mmap region을 찾아 정리한다.
+  for(int i = 0; i < MAXMMAP; i++){
+    struct mmap_area *ma = &mmap_areas[i];
+
+    // 다른 프로세스의 mmap metadata는 건드리면 안 된다.
+    if(ma->p != p)
+      continue;
+
+    // 이 region 안에서 실제로 fault/populate되어 매핑된 page만 해제한다.
+    // 아직 lazy 상태인 page는 PTE가 없을 수 있으므로 건너뛴다.
+    for(uint64 va = ma->addr; va < ma->addr + ma->length; va += PGSIZE){
+      pte_t *pte = walk(p->pagetable, va, 0);
+
+      // PTE가 존재하고, valid하며, leaf PTE인 경우만 uvmunmap한다.
+      // 이렇게 해야 freewalk 전에 leaf mapping이 제거되어
+      // panic: freewalk: leaf를 막을 수 있다.
+      if(pte && (*pte & PTE_V) && (*pte & (PTE_R | PTE_W | PTE_X)))
+        uvmunmap(p->pagetable, va, 1, 1);
+    }
+
+    // file-backed mapping이면 mmap 때 잡아둔 file reference를 반환한다.
+    if(ma->f)
+      fileclose(ma->f);
+
+    // metadata slot 초기화.
+    memset(ma, 0, sizeof(*ma));
+  }
+}
+
+
+// fork/kfork()에서 uvmcopy() 성공 후 호출
+// parent의 mmap_area metadata와 이미 실제 mapping된 page들을 child에 복제한다.
+int
+mmap_forkcopy(struct proc *parent, struct proc *child)
+{
+  struct mmap_area *ma;
+  struct mmap_area *cma;
+  uint64 va;
+  pte_t *pte;
+  uint64 pa;
+  char *mem;
+  int flags;
+
+  // [1] 전역 mmap metadata 배열 전체 순회
+  for(int i = 0; i < MAXMMAP; i++){
+    ma = &mmap_areas[i];
+
+    // [1-1] 비어 있는 slot 또는 parent 소유가 아닌 mapping은 무시
+    if(ma->p != parent)
+      continue;
+
+    // [2] child용 빈 mmap_area slot 찾기
+    cma = 0;
+    for(int j = 0; j < MAXMMAP; j++){
+      if(mmap_areas[j].p == 0){
+        cma = &mmap_areas[j];
+        break;
+      }
+    }
+
+    // [2-1] child용 metadata slot이 없으면 실패
+    if(cma == 0)
+      goto bad;
+
+    // [3] metadata 복사
+    // lazy page를 위해 metadata는 반드시 복사되어야 한다.
+    *cma = *ma;
+    cma->p = child;
+
+    // [3-1] file-backed mmap이면 file refcount 증가
+    // parent/child가 같은 struct file을 참조하므로 filedup 필요
+    if(cma->f)
+      filedup(cma->f);
+
+    // [4] mmap 영역의 각 page를 순회
+    for(va = ma->addr; va < ma->addr + ma->length; va += PGSIZE){
+
+      // [4-1] parent pagetable에서 해당 VA의 PTE 확인
+      pte = walk(parent->pagetable, va, 0);
+
+      // [4-2] 아직 lazy 상태인 page
+      // PTE가 없거나 valid하지 않으면 child에도 page를 만들지 않는다.
+      // child는 나중에 접근 시 page fault handler가 metadata를 보고 처리한다.
+      if(pte == 0)
+        continue;
+
+      if((*pte & PTE_V) == 0)
+        continue;
+
+      // [4-3] leaf PTE가 아니면 실제 physical page mapping이 아님
+      if((*pte & (PTE_R | PTE_W | PTE_X)) == 0)
+        continue;
+
+      // [5] 이미 fault/populate되어 실제 page가 있는 경우
+      // child는 parent physical page를 공유하지 않고 새 page를 받아야 한다.
+      pa = PTE2PA(*pte);
+
+      mem = kalloc();
+      if(mem == 0)
+        goto bad;
+
+      // [5-1] parent page 내용을 child page로 복사
+      memmove(mem, (char*)pa, PGSIZE);
+
+      // [5-2] parent PTE permission을 child에도 동일하게 적용
+      flags = PTE_FLAGS(*pte);
+
+      // [5-3] child pagetable에 같은 VA로 mapping
+      if(mappages(child->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+        kfree(mem);
+        goto bad;
+      }
+    }
+  }
+
+  return 0;
+
+
+// [6] 실패 시 정리
+// child에 복제된 mmap metadata와 이미 mapping된 mmap page들을 제거한다.
+bad:
+  mmap_cleanup(child);
+  return -1;
+}
+
+
+
+
+
+
+
+
+
+
 
 // Set up first user process.
 void
@@ -293,7 +802,12 @@ calculate_vdeadline(struct proc *p) { // input : by ai
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
-kfork(void)
+kfork(void) 
+// 자식 프로세스를 만듦. 자식은 부모 페이지를 그대로 쓰지 않음.
+// 1. 부모 페이지를 찾는다.
+// 2. 새로운 자식 페이지를 할당한다.
+// 3. 부모의 메모리 내용을 복붙한다.
+// 4. 새로운 mapping을 만든다.
 {
   int i, pid;
   struct proc *np;
@@ -304,8 +818,15 @@ kfork(void)
     return -1;
   }
 
-  // Copy user memory from parent to child.
+  // parent의 일반 user memory 복사
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
+  // [추가] mmap 영역 복사
+  if(mmap_forkcopy(p, np) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;

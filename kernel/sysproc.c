@@ -147,3 +147,38 @@ sys_waitpid(void)
   argint(0, &pid);
   return waitpid(pid);
 }
+
+
+uint64
+sys_mmap(void) // 인자 받기
+{
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+
+  argaddr(0, &addr);
+  argint(1, &length);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argint(5, &offset);
+
+  return mmap(addr, length, prot, flags, fd, offset);
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+
+  // user가 munmap(addr)로 넘긴 첫 번째 인자를 읽어온다.
+  argaddr(0, &addr);
+
+  // 실제 구현 함수에 넘기고 결과를 user에게 반환한다.
+  return munmap(addr);
+}
+
+uint64
+sys_freemem(void)
+{
+  return freemem();
+}
