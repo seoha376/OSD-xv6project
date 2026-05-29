@@ -24,7 +24,7 @@ main(void)
   printf("mmap addr = %p\n", p);
   printf("freemem after mmap lazy = %d\n", freemem());
 
-  p[0] = 'A';   // 첫 번째 page만 fault 발생
+  p[0] = 'A';
 
   after_fault = freemem();
   printf("freemem after first fault = %d\n", after_fault);

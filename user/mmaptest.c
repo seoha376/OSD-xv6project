@@ -11,23 +11,14 @@
 int
 main(void)
 {
-//   int before, after;
   char *p;
-
-//   before = freemem();
-
   p = (char*)mmap(0, 4096, PROT_READ | PROT_WRITE,
                   MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 
-//   after = freemem();
-
   printf("anonymous addr = %p\n", p);
-//   printf("freemem before = %d after = %d\n", before, after);
 
   if(p == 0)
     printf("FAIL: mmap returned 0\n");
-//   else if(after != before - 1)
-//     printf("FAIL: freemem did not decrease by 1\n");
   else if(p[0] != 0)
     printf("FAIL: anonymous page not zero-filled\n");
   else {
@@ -77,14 +68,11 @@ if(p == 0){
 
 printf("lazy anonymous addr=%p\n", p);
 
-// 여기서 첫 page fault가 나야 정상.
-// handler가 zero-filled page를 만들어야 하므로 p[0]은 0이어야 한다.
 if(p[0] != 0){
   printf("lazy anonymous not zero-filled\n");
   exit(1);
 }
 
-// write fault 또는 이미 매핑된 페이지 write 확인.
 p[0] = 'A';
 
 if(p[0] != 'A'){

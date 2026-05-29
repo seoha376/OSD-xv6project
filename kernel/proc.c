@@ -566,21 +566,21 @@ munmap(uint64 addr)
   for(uint64 va = ma->addr; va < ma->addr + ma->length; va += PGSIZE){
     // walk(..., 0)은 새 page table을 만들지 않고
     // 기존 PTE가 있는지만 확인한다.
-    pte_t *pte = walk(p->pagetable, va, 0);
+    // pte_t *pte = walk(p->pagetable, va, 0);
 
-    // 아직 fault가 안 난 lazy page라면 PTE 자체가 없을 수 있다.
-    // 이 경우 해제할 물리 page도 없으므로 그냥 넘어간다.
-    if(pte == 0)
-      continue;
+    // // 아직 fault가 안 난 lazy page라면 PTE 자체가 없을 수 있다.
+    // // 이 경우 해제할 물리 page도 없으므로 그냥 넘어간다.
+    // if(pte == 0)
+    //   continue;
 
-    // PTE가 있어도 valid하지 않으면 실제 매핑된 page가 아니다.
-    if((*pte & PTE_V) == 0)
-      continue;
+    // // PTE가 있어도 valid하지 않으면 실제 매핑된 page가 아니다.
+    // if((*pte & PTE_V) == 0)
+    //   continue;
 
-    // R/W/X 중 하나라도 있어야 leaf PTE이다.
-    // leaf가 아닌 page-table 중간 노드는 uvmunmap 대상이 아니다.
-    if((*pte & (PTE_R | PTE_W | PTE_X)) == 0)
-      continue;
+    // // R/W/X 중 하나라도 있어야 leaf PTE이다.
+    // // leaf가 아닌 page-table 중간 노드는 uvmunmap 대상이 아니다.
+    // if((*pte & (PTE_R | PTE_W | PTE_X)) == 0)
+    //   continue;
 
     // 실제로 매핑된 leaf page만 unmap하고,
     // 마지막 인자 1로 물리 page도 kfree한다.
