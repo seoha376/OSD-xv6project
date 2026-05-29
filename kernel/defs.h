@@ -199,6 +199,21 @@ int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
 
+void swapinit(void);
+void swapread(uint64 ptr, int blkno);
+void swapwrite(uint64 ptr, int blkno);
+void swapstat(int *nr_sectors_read, int *nr_sectors_write);
+int swap_alloc_slot(void);
+void swap_free_slot(uint slot);
+void *swap_out(void);
+int swap_in(pagetable_t pt, uint64 va);
+
+void lruinit(void);
+void lru_add(pagetable_t pt, uint64 va, uint64 pa);
+void lru_remove(uint64 pa);
+int lru_size(void);
+uint64 lru_select_victim(pagetable_t *out_pt, uint64 *out_va);
+
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);

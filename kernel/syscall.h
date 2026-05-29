@@ -28,4 +28,5 @@
 #define SYS_mmap 28
 #define SYS_munmap  29
 #define SYS_freemem 30
+#define SYS_swapstat 31
 #define MAXMMAP 64
