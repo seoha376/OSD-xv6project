@@ -77,12 +77,21 @@ usertrap(void)
   //
   // r_stval()에는 fault가 발생한 가상주소가 들어 있다.  
   uint64 fault_va = r_stval();
+  pte_t *pte = walk(p->pagetable, PGROUNDDOWN(fault_va), 0);
+
+  if(pte && ((*pte & PTE_V) == 0) && (*pte & PTE_S)){
+    if(swap_in(p->pagetable, fault_va) == 0){
+      // 성공. 아무 것도 하지 않음. fault instruction 재실행됨.
+    } else {
+      setkilled(p);
+    }
+  }
 
     // 1순위: mmap lazy fault 처리
   //
   // fault_va가 mmap_area 안에 있으면
   // mmap_handle_pagefault()가 한 페이지만 kalloc하고 mappages한다.
-  if(mmap_handle_pagefault(p, fault_va, r_scause()) == 0){
+  else if(mmap_handle_pagefault(p, fault_va, r_scause()) == 0){
     // mmap lazy page fault 처리 성공
   }
 

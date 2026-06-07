@@ -146,6 +146,9 @@ found:
   p->is_eligible = 1;
 
 
+  release(&p->lock);
+
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -160,6 +163,8 @@ found:
     release(&p->lock);
     return 0;
   }
+
+  acquire(&p->lock);
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -818,8 +823,11 @@ kfork(void)
     return -1;
   }
 
+  release(&np->lock);
+
   // parent의 일반 user memory 복사
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -827,10 +835,13 @@ kfork(void)
 
   // [추가] mmap 영역 복사
   if(mmap_forkcopy(p, np) < 0){
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+
+  acquire(&np->lock);
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -843,6 +854,7 @@ kfork(void)
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
+
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
@@ -861,7 +873,8 @@ kfork(void)
   np -> runtime = 0;
   np -> timeslice = 5;
   np -> vdeadline = calculate_vdeadline(np);
-  np->state = RUNNABLE;
+
+  np -> state = RUNNABLE;
 
   release(&np->lock);
 

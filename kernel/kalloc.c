@@ -82,6 +82,14 @@ freemem(void)
   return n;
 }
 
+
+static int swap_enabled = 0;
+
+void
+kalloc_enable_swap(void)
+{
+  swap_enabled = 1;
+}
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
@@ -92,12 +100,20 @@ kalloc(void) // freelist에서 물리 페이지 하나를 확보한다. 추후 m
 
   acquire(&kmem.lock);
   r = kmem.freelist; // 사용가능한 free physical page들의 연결리스트 : 줄여서 통칭 freelist
+  
   if(r)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
+  if(r == 0 && swap_enabled){
+  printf("K1\n");
+  r = (struct run*)swap_out();
+  printf("K2 %p\n", r);
+}
+
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk, 해제된 페이지를 쓰레기 값으로 덮는다.
+  
   return (void*)r;
 }
 

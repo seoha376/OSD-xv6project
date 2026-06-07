@@ -102,7 +102,40 @@ lru_size(void)
 void
 lru_add(pagetable_t pt, uint64 va, uint64 pa)
 {
-  // TODO: implement.
+  struct page *pg = pa_to_page(pa);
+
+  acquire(&lru.lock);
+
+  if(pg->pagetable != 0){
+    // 이미 있으면 먼저 unlink
+    if(pg->next == pg){
+      lru.head = 0;
+    } else {
+      pg->prev->next = pg->next;
+      pg->next->prev = pg->prev;
+      if(lru.head == pg)
+        lru.head = pg->next;
+    }
+    lru.count--;
+  }
+
+  pg->pagetable = pt;
+  pg->vaddr = va;
+
+  if(lru.head == 0){
+    pg->next = pg;
+    pg->prev = pg;
+    lru.head = pg;
+  } else {
+    struct page *tail = lru.head->prev;
+    tail->next = pg;
+    pg->prev = tail;
+    pg->next = lru.head;
+    lru.head->prev = pg;
+  }
+
+  lru.count++;
+  release(&lru.lock);
 }
 
 //
@@ -127,7 +160,31 @@ lru_add(pagetable_t pt, uint64 va, uint64 pa)
 void
 lru_remove(uint64 pa)
 {
-  // TODO: implement.
+  struct page *pg = pa_to_page(pa);
+
+  acquire(&lru.lock);
+
+  if(pg->pagetable == 0){
+    release(&lru.lock);
+    return;
+  }
+
+  if(pg->next == pg){
+    lru.head = 0;
+  } else {
+    pg->prev->next = pg->next;
+    pg->next->prev = pg->prev;
+    if(lru.head == pg)
+      lru.head = pg->next;
+  }
+
+  pg->next = 0;
+  pg->prev = 0;
+  pg->pagetable = 0;
+  pg->vaddr = 0;
+  lru.count--;
+
+  release(&lru.lock);
 }
 
 //
@@ -168,6 +225,63 @@ lru_remove(uint64 pa)
 uint64
 lru_select_victim(pagetable_t *out_pt, uint64 *out_va)
 {
-  // TODO: implement.
+  acquire(&lru.lock);
+
+  if(lru.head == 0){
+    release(&lru.lock);
+    return 0;
+  }
+
+  int limit = 2 * lru.count + 10;
+
+  for(int i = 0; i < limit && lru.head != 0; i++){
+    struct page *pg = lru.head;
+    pte_t *pte = walk(pg->pagetable, pg->vaddr, 0);
+
+    if(pte == 0 || (*pte & PTE_V) == 0){
+      // stale node 제거
+      if(pg->next == pg){
+        lru.head = 0;
+      } else {
+        pg->prev->next = pg->next;
+        pg->next->prev = pg->prev;
+        lru.head = pg->next;
+      }
+      pg->next = pg->prev = 0;
+      pg->pagetable = 0;
+      pg->vaddr = 0;
+      lru.count--;
+      continue;
+    }
+
+    if(*pte & PTE_A){
+      *pte &= ~PTE_A;
+      sfence_vma();
+      lru.head = pg->next;   // tail로 회전한 효과
+      continue;
+    }
+
+    uint64 pa = PTE2PA(*pte);
+    *out_pt = pg->pagetable;
+    *out_va = pg->vaddr;
+
+    if(pg->next == pg){
+      lru.head = 0;
+    } else {
+      pg->prev->next = pg->next;
+      pg->next->prev = pg->prev;
+      lru.head = pg->next;
+    }
+
+    pg->next = pg->prev = 0;
+    pg->pagetable = 0;
+    pg->vaddr = 0;
+    lru.count--;
+
+    release(&lru.lock);
+    return pa;
+  }
+
+  release(&lru.lock);
   return 0;
 }

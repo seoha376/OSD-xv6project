@@ -114,9 +114,6 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   return &pagetable[PX(0, va)];
 }
 
-// Look up a virtual address, return the physical address,
-// or 0 if not mapped.
-// Can only be used to look up user pages.
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
@@ -129,12 +126,47 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
+
   if((*pte & PTE_V) == 0)
     return 0;
+
   if((*pte & PTE_U) == 0)
     return 0;
+
   pa = PTE2PA(*pte);
   return pa;
+}
+
+static uint64
+walkaddr_or_swapin(pagetable_t pagetable, uint64 va)
+{
+
+  uint64 va0;
+  uint64 pa;
+  pte_t *pte;
+
+  if(va >= MAXVA)
+    return 0;
+
+  va0 = PGROUNDDOWN(va);
+
+  pa = walkaddr(pagetable, va0);
+  if(pa)
+    return pa;
+
+  pte = walk(pagetable, va0, 0);
+  if(pte == 0)
+    return 0;
+
+  if(((*pte & PTE_V) == 0) && (*pte & PTE_S)){
+    if(swap_in(pagetable, va0) < 0)
+      return 0;
+
+    pa = walkaddr(pagetable, va0);
+    return pa;
+  }
+
+  return 0;
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
@@ -165,6 +197,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if(*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
+    if(perm & PTE_U)
+      lru_add(pagetable, a, pa);
     if(a == last)
       break;
     a += PGSIZE;
@@ -199,14 +233,26 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
-      continue;   
-    if((*pte & PTE_V) == 0)  // has physical page been allocated?
+    if((pte = walk(pagetable, a, 0)) == 0)
       continue;
+
+    if((*pte & PTE_V) == 0){
+      if(*pte & PTE_S){
+        printf("FREE SLOT %d\n", PTE2SLOT(*pte));
+        if(do_free)
+          swap_free_slot(PTE2SLOT(*pte));
+        *pte = 0;
+      }
+      continue;
+    }
+
     if(do_free){
       uint64 pa = PTE2PA(*pte);
+      if(*pte & PTE_U)
+        lru_remove(pa);
       kfree((void*)pa);
     }
+
     *pte = 0;
   }
 }
@@ -304,14 +350,35 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      continue;   // page table entry hasn't been allocated
-    if((*pte & PTE_V) == 0)
-      continue;   // physical page hasn't been allocated
+      continue;
+
+    if((*pte & PTE_V) == 0){
+      if(*pte & PTE_S){
+        if(swap_in(old, i) < 0)
+          goto err;
+
+        pte = walk(old, i, 0);
+        if(pte == 0 || (*pte & PTE_V) == 0)
+          goto err;
+      } else {
+        continue;
+      }
+    }
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+
+    // lru_remove(pa);
+
+    if((mem = kalloc()) == 0){
+      // lru_add(old, i, pa);
       goto err;
+    }
+
     memmove(mem, (char*)pa, PGSIZE);
+
+    // lru_add(old, i, pa);
+
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
       kfree(mem);
       goto err;
@@ -351,11 +418,10 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
   
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0) {
-      if((pa0 = vmfault(pagetable, va0, 0)) == 0) {
+    pa0 = walkaddr_or_swapin(pagetable, va0);
+    if(pa0 == 0){
+      if((pa0 = vmfault(pagetable, va0, 0)) == 0)
         return -1;
-      }
     }
 
     pte = walk(pagetable, va0, 0);
@@ -385,7 +451,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr_or_swapin(pagetable, va0);
     if(pa0 == 0) {
       if((pa0 = vmfault(pagetable, va0, 0)) == 0) {
         return -1;
@@ -415,7 +481,7 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 
   while(got_null == 0 && max > 0){
     va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr_or_swapin(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (srcva - va0);

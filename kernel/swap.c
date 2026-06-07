@@ -207,8 +207,58 @@ swapstat(int *nr_sectors_read, int *nr_sectors_write)
 void *
 swap_out(void)
 {
-  // TODO: implement.
-  return 0;
+  pagetable_t pt;
+  uint64 va;
+
+
+  printf("S1\n");
+
+
+  // printf("[swap_out] enter\n");
+  uint64 pa = lru_select_victim(&pt, &va);
+  // printf("[swap_out] victim pa=%ld va=%ld\n", pa, va);
+
+  if(pa == 0){
+    // printf("[swap_out] no victim lru=%d\n", lru_size());
+    return 0;
+  }
+
+  printf("S2 pa=%ld\n", pa);
+
+  int slot = swap_alloc_slot();
+  if(slot < 0){
+    lru_add(pt, va, pa);
+    return 0;
+  }
+
+  printf("S3 slot=%d\n", slot);
+
+  swapwrite(pa, slot);
+
+  printf("S4\n");
+
+  pte_t *pte = walk(pt, va, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0){
+    swap_free_slot(slot);
+    lru_add(pt, va, pa);
+    return 0;
+  }
+
+  uint flags = PTE_FLAGS(*pte);
+  flags &= ~PTE_V;
+  flags |= PTE_S;
+
+  *pte = SLOT2PTE(slot) | flags;
+  sfence_vma();
+
+  return (void *)pa;
+
+
+  static int cnt=0;
+  cnt++;
+
+  if(cnt % 100 == 0)
+    printf("swapout=%d lru=%d\n", cnt, lru_size());
 }
 
 //
@@ -254,6 +304,43 @@ swap_out(void)
 int
 swap_in(pagetable_t pt, uint64 va)
 {
-  // TODO: implement.
-  return -1;
+
+  printf("SWAPIN va=%ld\n", va);
+  va = PGROUNDDOWN(va);
+
+  pte_t *pte = walk(pt, va, 0);
+  if(pte == 0)
+    return -1;
+
+  if((*pte & PTE_V) || ((*pte & PTE_S) == 0))
+    return -1;
+
+  uint flags = PTE_FLAGS(*pte);
+  uint slot = PTE2SLOT(*pte);
+
+
+  // 중요: kalloc() 중 재귀 swap_out/swap_in이 이 PTE를 다시 건드리지 못하게 막음
+  *pte = 0;
+  sfence_vma();
+
+  char *mem = kalloc();
+  if(mem == 0){
+    // 실패하면 원래 swapped PTE 복구
+    *pte = SLOT2PTE(slot) | flags;
+    sfence_vma();
+    return -1;
+  }
+
+  swapread((uint64)mem, slot);
+  swap_free_slot(slot);
+
+  flags |= PTE_V;
+  flags &= ~PTE_S;
+
+  *pte = PA2PTE((uint64)mem) | flags;
+  sfence_vma();
+
+  lru_add(pt, va, (uint64)mem);
+
+  return 0;
 }
