@@ -238,7 +238,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
     if((*pte & PTE_V) == 0){
       if(*pte & PTE_S){
-        printf("FREE SLOT %d\n", PTE2SLOT(*pte));
+        // printf("FREE SLOT %d\n", PTE2SLOT(*pte));
         if(do_free)
           swap_free_slot(PTE2SLOT(*pte));
         *pte = 0;

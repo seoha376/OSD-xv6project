@@ -211,7 +211,7 @@ swap_out(void)
   uint64 va;
 
 
-  printf("S1\n");
+  // printf("S1\n");
 
 
   // printf("[swap_out] enter\n");
@@ -223,7 +223,7 @@ swap_out(void)
     return 0;
   }
 
-  printf("S2 pa=%ld\n", pa);
+  // printf("S2 pa=%ld\n", pa);
 
   int slot = swap_alloc_slot();
   if(slot < 0){
@@ -231,11 +231,11 @@ swap_out(void)
     return 0;
   }
 
-  printf("S3 slot=%d\n", slot);
+  // printf("S3 slot=%d\n", slot);
 
   swapwrite(pa, slot);
 
-  printf("S4\n");
+  // printf("S4\n");
 
   pte_t *pte = walk(pt, va, 0);
   if(pte == 0 || (*pte & PTE_V) == 0){
@@ -305,7 +305,7 @@ int
 swap_in(pagetable_t pt, uint64 va)
 {
 
-  printf("SWAPIN va=%ld\n", va);
+  // printf("SWAPIN va=%ld\n", va);
   va = PGROUNDDOWN(va);
 
   pte_t *pte = walk(pt, va, 0);

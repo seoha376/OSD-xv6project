@@ -106,9 +106,9 @@ kalloc(void) // freelist에서 물리 페이지 하나를 확보한다. 추후 m
   release(&kmem.lock);
 
   if(r == 0 && swap_enabled){
-  printf("K1\n");
+  // printf("K1\n");
   r = (struct run*)swap_out();
-  printf("K2 %p\n", r);
+  // printf("K2 %p\n", r);
 }
 
   if(r)
